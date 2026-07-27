@@ -31,6 +31,7 @@
 - Inspect View: Timeline now requires a tool-calling loop for utility-agent classification and surfaces the hidden event count. (#425)
 - Inspect View: Added connection limit history display to the Stats tab. (#447)
 - Inspect View: Fixed viewer to show the Action tab first for annotated browser actions. (#429)
+- Web Browser: `web_browser_type` on a dropdown now selects the option named by the text (by label or value) rather than silently selecting a different one. (#2043)
 
 ## 0.3.249 (20 July 2026)
 
@@ -41,7 +42,6 @@
 - Control Channel: paged event reads served from the realtime sample buffer now load only the message/call pool entries and attachments the page references, instead of the sample's full pools and every attachment body.
 - Logging: Building a sample summary no longer serializes large structured metadata values just to exclude them, avoiding stalls when sample metadata embeds large data.
 - Agent Bridge: Support OpenAI clients that consume responses via `with_raw_response` (e.g. langchain-openai), which previously failed with `'ChatCompletion' object has no attribute 'parse'`. (#4341)
-- Web Browser: `web_browser_type` on a dropdown now selects the option named by the text (by label or value) rather than silently selecting a different one. (#2043)
 
 ## 0.3.248 (17 July 2026)
 
