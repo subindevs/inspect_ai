@@ -110,6 +110,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       sandbox_tools: ${{ steps.filter.outputs.sandbox_tools }}
+      tool_support: ${{ steps.filter.outputs.tool_support }}
       docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v7
@@ -123,6 +124,8 @@ jobs:
               - '!**/*.md'
             sandbox_tools:
               - 'src/inspect_sandbox_tools/**'
+            tool_support:
+              - 'src/inspect_tool_support/**'
             docs:
               - 'docs/**'
               - 'requirements-doc.txt'
@@ -233,6 +236,42 @@ jobs:
 
       - name: Test with pytest
         run: uv run pytest src/inspect_sandbox_tools/tests/agent_bridge/ -rA --color=yes
+
+      - name: Minimize uv cache
+        if: ${{ !cancelled() }}
+        run: uv cache prune --ci
+
+  # Unit tests for the inspect-tool-support package (the web browser tool and
+  # the RPC CLI), which ships as the aisiuk/inspect-tool-support image rather
+  # than in the inspect_ai wheel. Its tests live inside the package and import
+  # its own dependencies (playwright, jsonrpcserver, ...), none of which are in
+  # requirements-dev.txt — so they need their own venv here rather than a place
+  # in the root `test` job's testpaths, where `--doctest-modules` would import
+  # every module in the package and fail collection. No Docker or browser
+  # binary needed: the crawler tests stub the CDP session.
+  tool-support-unit:
+    needs: changes
+    if: needs.changes.outputs.tool_support == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: "3.11"
+
+      - name: Install tool-support package (with dev deps)
+        run: |-
+          uv venv
+          uv pip install "./src/inspect_tool_support[dev]"
+
+      - name: Test with pytest
+        # -p no:cacheprovider keeps pytest from writing into the package tree
+        run: uv run pytest src/inspect_tool_support -rA --color=yes -p no:cacheprovider
 
       - name: Minimize uv cache
         if: ${{ !cancelled() }}
