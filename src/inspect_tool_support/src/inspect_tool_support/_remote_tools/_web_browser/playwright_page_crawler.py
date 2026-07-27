@@ -37,11 +37,18 @@ _WAIT_FOR_NAVIGATION_TIME = 2.0
 _WAIT_STRATEGY: Literal["domcontentloaded"] = "domcontentloaded"
 
 # Reads a `<select>`'s options, or reports that the element is not one at all.
-# `label` is the option's label attribute, falling back to its text.
+# `label` is the option's label attribute, falling back to its text. An option
+# also counts as disabled when its `<optgroup>` is, which `o.disabled` alone
+# does not reflect.
 _READ_SELECT_OPTIONS_JS = """
 function() {
   if (this.tagName !== 'SELECT') return null;
-  return Array.from(this.options).map((o) => [o.value, o.label || o.text]);
+  return Array.from(this.options).map((o) => {
+    const parent = o.parentElement;
+    const inDisabledGroup =
+      parent !== null && parent.tagName === 'OPTGROUP' && parent.disabled;
+    return [o.value, o.label || o.text, o.disabled || inDisabledGroup];
+  });
 }
 """
 
@@ -64,6 +71,9 @@ function(index, submitForm) {
 class _ResolvedSelect(NamedTuple):
     """A `<select>` element in the page and the options it offers."""
 
+    element_id: int | str
+    """Id the caller named the element by, for error messages."""
+
     object_id: str
     """Id of the JavaScript object handle for the element."""
 
@@ -79,8 +89,6 @@ class PageCrawler:
         # Enable chrome development tools, and accessibility tree output.
         cdp_session = await page.context.new_cdp_session(page)
         await cdp_session.send("Accessibility.enable")
-        # DOM.resolveNode, used to drive <select> elements, requires the DOM domain
-        await cdp_session.send("DOM.enable")
         return PageCrawler(
             page,
             cdp_session,
@@ -257,7 +265,7 @@ class PageCrawler:
         directly — see `select_options` for why typing into one misbehaves.
         """
         if (resolved := await self._resolve_select(element_id)) is not None:
-            await self._select_option(element_id, resolved, text)
+            await self._select_option(resolved, text)
         else:
             await self.click(element_id)
             await self._page.keyboard.type(text)
@@ -270,7 +278,7 @@ class PageCrawler:
         that would otherwise do so never reaches it.
         """
         if (resolved := await self._resolve_select(element_id)) is not None:
-            await self._select_option(element_id, resolved, text, submit_form=True)
+            await self._select_option(resolved, text, submit_form=True)
         else:
             await self.clear(element_id)
             await self._await_navigation_after_action(
@@ -314,7 +322,14 @@ class PageCrawler:
 
     async def _resolve_select(self, element_id: int | str) -> _ResolvedSelect | None:
         """Resolves the element to a `<select>` handle, or None if it isn't one."""
-        backend_node_id = self.lookup_node(element_id).backend_dom_node_id
+        node = self.lookup_node(element_id)
+        # A <select> renders as a combobox, so anything else can skip the two CDP
+        # round trips it would take to find that out. ARIA comboboxes built from
+        # <div>s do reach them, and fall out at the tag check in the page.
+        if node.role != "combobox":
+            return None
+
+        backend_node_id = node.backend_dom_node_id
         if backend_node_id is None:
             return None
 
@@ -329,7 +344,7 @@ class PageCrawler:
 
         try:
             options = typing.cast(
-                list[list[str]] | None,
+                list[tuple[str, str, bool]] | None,
                 await self._call_function_on(object_id, _READ_SELECT_OPTIONS_JS),
             )
         except Exception:
@@ -341,13 +356,16 @@ class PageCrawler:
             return None
 
         return _ResolvedSelect(
+            element_id=element_id,
             object_id=object_id,
-            options=[SelectOption(value, label) for value, label in options],
+            options=[
+                SelectOption(value, label, disabled)
+                for value, label, disabled in options
+            ],
         )
 
     async def _select_option(
         self,
-        element_id: int | str,
         resolved: _ResolvedSelect,
         text: str,
         submit_form: bool = False,
@@ -358,7 +376,7 @@ class PageCrawler:
             if index is None:
                 raise ValueError(
                     f"'{text}' does not match any option of the dropdown with id "
-                    f"{element_id}. Its options are: "
+                    f"{resolved.element_id}. Its options are: "
                     f"{describe_select_options(resolved.options)}"
                 )
 

@@ -51,8 +51,15 @@ def test_matches_empty_value_of_placeholder_option():
     assert match_select_option(issue_2043_options, "") == 0
 
 
-def test_prefers_value_over_another_options_label():
+def test_prefers_label_over_another_options_value():
+    # A model reads "Two" off the accessibility tree and types it back, so it has
+    # to get the option that displayed it — not the one that merely stores it.
     options = [SelectOption("Two", "One"), SelectOption("2", "Two")]
+    assert match_select_option(options, "Two") == 1
+
+
+def test_matches_value_when_no_label_competes_for_it():
+    options = [SelectOption("Two", "One"), SelectOption("2", "Second")]
     assert match_select_option(options, "Two") == 0
 
 
@@ -65,3 +72,47 @@ def test_describes_options():
     assert describe_select_options(months[1:3]) == (
         '"January" (value: "1"), "February" (value: "2")'
     )
+
+
+def test_never_matches_a_disabled_option():
+    options = [
+        SelectOption("option1", "Option 1"),
+        SelectOption("option2", "Option 2", disabled=True),
+    ]
+    assert match_select_option(options, "Option 2") is None
+    assert match_select_option(options, "option2") is None
+    # nor via the prefix pass, which would otherwise see it as the only match
+    assert match_select_option(options, "Option 2 extra") is None
+
+
+def test_indexes_past_disabled_options():
+    # The index is assigned to selectedIndex, which counts disabled options, so
+    # skipping them while matching must not shift what the index refers to.
+    options = [
+        SelectOption("", "Choose an option", disabled=True),
+        SelectOption("option1", "Option 1", disabled=True),
+        SelectOption("option2", "Option 2"),
+    ]
+    assert match_select_option(options, "Option 2") == 2
+
+
+def test_matches_around_a_disabled_namesake():
+    options = [
+        SelectOption("dup", "Duplicate", disabled=True),
+        SelectOption("dup", "Duplicate"),
+    ]
+    assert match_select_option(options, "Duplicate") == 1
+
+
+def test_describes_a_disabled_option_as_such():
+    assert describe_select_options([SelectOption("1", "January", disabled=True)]) == (
+        '"January" (value: "1") [disabled]'
+    )
+
+
+def test_truncates_a_long_option_list():
+    options = [SelectOption(str(index), f"Option {index}") for index in range(40)]
+    described = describe_select_options(options)
+    assert described.endswith(", and 10 more")
+    assert '"Option 29" (value: "29")' in described
+    assert "Option 30" not in described

@@ -16,8 +16,12 @@ from inspect_tool_support._remote_tools._web_browser.playwright_page_crawler imp
     PageCrawler,
 )
 
-# value/label pairs as _READ_SELECT_OPTIONS_JS reports them
-_OPTIONS = [["", "Choose an option"], ["option1", "Option 1"], ["option3", "Option 3"]]
+# value/label/disabled triples as _READ_SELECT_OPTIONS_JS reports them
+_OPTIONS = [
+    ["", "Choose an option", False],
+    ["option1", "Option 1", False],
+    ["option3", "Option 3", False],
+]
 
 _OBJECT_ID = "object-1"
 
@@ -105,15 +109,18 @@ def anyio_backend() -> str:
 
 
 class FakeNode:
-    """The `<select>` as the accessibility tree exposes it."""
+    """An element as the accessibility tree exposes it."""
 
-    backend_dom_node_id = 42
-    role = "combobox"
+    def __init__(self, role: str = "combobox") -> None:
+        self.role = role
+        self.backend_dom_node_id = 42
 
 
-def _crawler(page: FakePage, cdp_session: FakeCDPSession) -> PageCrawler:
+def _crawler(
+    page: FakePage, cdp_session: FakeCDPSession, role: str = "combobox"
+) -> PageCrawler:
     crawler = PageCrawler(page, cdp_session, 1.0)  # type: ignore[arg-type]
-    crawler.lookup_node = lambda element_id: FakeNode()  # type: ignore[assignment,return-value]
+    crawler.lookup_node = lambda element_id: FakeNode(role)  # type: ignore[assignment,return-value]
     return crawler
 
 
@@ -181,3 +188,13 @@ async def test_unmatched_text_reports_the_available_options(monkeypatch):
     # nothing was selected, and the handle was still cleaned up
     assert cdp_session.selected_index is None
     assert cdp_session.released
+
+
+@pytest.mark.anyio
+async def test_a_non_combobox_never_reaches_the_cdp_session():
+    """Text inputs must not pay the resolve round trips to learn they aren't dropdowns."""
+    cdp_session = FakeCDPSession()
+    crawler = _crawler(FakePage(), cdp_session, role="textbox")
+
+    assert await crawler._resolve_select(1) is None
+    assert cdp_session.methods == []
