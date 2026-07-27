@@ -6,6 +6,7 @@ Portions based on  https://github.com/web-arena-x/webarena
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import typing
 from typing import Literal, NamedTuple
@@ -396,8 +397,20 @@ class PageCrawler:
         return typing.cast(object, result.get("result", {}).get("value", None))
 
     async def _release_object(self, object_id: str) -> None:
-        """Releases a resolved node so that the page can garbage collect it."""
-        await self._cdp_session.send("Runtime.releaseObject", {"objectId": object_id})
+        """Releases a resolved node so that the page can garbage collect it.
+
+        Best effort. Selecting an option routinely navigates — submitting the
+        enclosing form is the whole point of `submit` — and navigating destroys
+        the execution context that owns the handle, so the release then fails
+        with "Cannot find context with specified id". The handle died with its
+        context, which is the outcome we wanted; and since callers release in a
+        `finally`, letting that surface would report a successful selection as
+        an error and mask any exception already in flight.
+        """
+        with contextlib.suppress(Exception):
+            await self._cdp_session.send(
+                "Runtime.releaseObject", {"objectId": object_id}
+            )
 
     async def _await_navigation_after_action(
         self, action: typing.Callable[[], typing.Awaitable[None]]
