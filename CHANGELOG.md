@@ -31,7 +31,7 @@
 - Inspect View: Timeline now requires a tool-calling loop for utility-agent classification and surfaces the hidden event count. (#425)
 - Inspect View: Added connection limit history display to the Stats tab. (#447)
 - Inspect View: Fixed viewer to show the Action tab first for annotated browser actions. (#429)
-- Web Browser: `web_browser_type` on a dropdown now selects the option named by the text (by label or value) rather than silently selecting a different one. (#2043)
+- Web Browser: `web_browser_type` and `web_browser_type_submit` on a dropdown now select the option named by the text (by label or value) rather than a different one. (#2043)
 
 ## 0.3.249 (20 July 2026)
 

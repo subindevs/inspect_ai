@@ -187,9 +187,12 @@ def test_web_browser_type_submit():
 @skip_if_no_docker
 @pytest.mark.slow
 @pytest.mark.skip(
-    reason="Needs an aisiuk/inspect-tool-support image built after the fix for "
-    "https://github.com/UKGovernmentBEIS/inspect_ai/issues/2043. Remove this skip "
-    "once that image is published."
+    reason="test_inspect_tool_support.yaml runs the published "
+    "aisiuk/inspect-tool-support image, which still types into dropdowns. Remove "
+    "this skip once an image built after the fix for "
+    "https://github.com/UKGovernmentBEIS/inspect_ai/issues/2043 is published. The "
+    "container-side behaviour is covered meanwhile by test_playwright_page_crawler.py "
+    "and test_select_options.py in src/inspect_tool_support."
 )
 def test_web_browser_type_selects_dropdown_option():
     call_number_gen = count()
@@ -241,7 +244,12 @@ def test_web_browser_type_selects_dropdown_option():
 
     assert log.samples
 
-    assert 'Current input: "Three"' in log.samples[0].messages[4].text
+    call = get_tool_call(log.samples[0].messages, "web_browser_type")
+    assert call
+    response = get_tool_response(log.samples[0].messages, call)
+    assert response
+    # the tree reports a combobox's selection as its current input
+    assert 'Current input: "Three"' in response.text
 
 
 @skip_if_no_docker
