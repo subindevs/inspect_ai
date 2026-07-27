@@ -186,6 +186,66 @@ def test_web_browser_type_submit():
 
 @skip_if_no_docker
 @pytest.mark.slow
+@pytest.mark.skip(
+    reason="Needs an aisiuk/inspect-tool-support image built after the fix for "
+    "https://github.com/UKGovernmentBEIS/inspect_ai/issues/2043. Remove this skip "
+    "once that image is published."
+)
+def test_web_browser_type_selects_dropdown_option():
+    call_number_gen = count()
+
+    def custom_outputs_generator(
+        input: list[ChatMessage],
+        tools: list[ToolInfo],
+        tool_choice: ToolChoice,
+        config: GenerateConfig,
+    ) -> ModelOutput:
+        match next(call_number_gen):
+            case 0:
+                return ModelOutput.for_tool_call(
+                    model="mockllm/model",
+                    tool_name="web_browser_go",
+                    tool_arguments={
+                        "url": "https://www.selenium.dev/selenium/web/web-form.html"
+                    },
+                )
+            case 1:
+                return ModelOutput.for_tool_call(
+                    model="mockllm/model",
+                    tool_name="web_browser_type",
+                    # "3" is the option's value; its label is "Three", so keystroke
+                    # typeahead would match nothing and leave the dropdown untouched
+                    tool_arguments={
+                        "element_id": find_element_id(input, r"combobox"),
+                        "text": "3",
+                    },
+                )
+            case _:
+                return ModelOutput.from_content(
+                    model="mockllm/model", content="We are all done here."
+                )
+
+    task = Task(
+        dataset=[Sample(input="Please use the web_browser tool")],
+        solver=[use_tools(web_browser()), generate()],
+        sandbox=web_browser_sandbox(),
+    )
+
+    log = eval(
+        task,
+        model=get_model(
+            "mockllm/model",
+            custom_outputs=custom_outputs_generator,
+        ),
+    )[0]
+
+    assert log.samples
+
+    assert 'Current input: "Three"' in log.samples[0].messages[4].text
+
+
+@skip_if_no_docker
+@pytest.mark.slow
 @flaky_retry(max_retries=3)
 def test_web_browser_open_new_page():
     call_number_gen = count()
