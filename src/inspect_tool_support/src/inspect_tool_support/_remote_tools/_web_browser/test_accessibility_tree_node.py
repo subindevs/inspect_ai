@@ -1,4 +1,4 @@
-from cdp.dom_snapshot import (
+from inspect_tool_support._remote_tools._web_browser.cdp.dom_snapshot import (
     DocumentSnapshot,
     DOMSnapshot,
     LayoutTreeSnapshot,
