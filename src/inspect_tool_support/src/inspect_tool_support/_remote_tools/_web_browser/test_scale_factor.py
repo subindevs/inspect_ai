@@ -1,7 +1,9 @@
 import sys
 import types
 
-from scale_factor import get_screen_scale_factor
+from inspect_tool_support._remote_tools._web_browser.scale_factor import (
+    get_screen_scale_factor,
+)
 
 
 def _install_fake_appkit(monkeypatch, screen: object) -> None:
