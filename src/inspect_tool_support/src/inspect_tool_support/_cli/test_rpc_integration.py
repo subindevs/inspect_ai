@@ -1,6 +1,6 @@
 import json
-import os
 import subprocess
+import sys
 import time
 from typing import Any, Dict
 
@@ -42,12 +42,11 @@ def exec_rpc_request(request: Dict[str, Any], timeout: int = 10) -> Dict[str, An
     request_json = json.dumps(request)
 
     result = subprocess.run(
-        ["python", "-m", "src.inspect_tool_support._cli.main", "exec"],
+        [sys.executable, "-m", "inspect_tool_support._cli.main", "exec"],
         input=request_json,
         text=True,
         capture_output=True,
         timeout=timeout,
-        cwd=os.getcwd(),
         check=False,
     )
 
@@ -78,6 +77,11 @@ def test_version_method():
     assert len(version.split(".")) == 3  # Major.minor.patch format
 
 
+@pytest.mark.skip(
+    reason="Drives bash_session_new_session, but the bash session tool moved to "
+    "inspect_sandbox_tools (ddf673c8e) and _remote_tools now holds only the web "
+    "browser. Retarget at a web_* method — which needs a browser install — to revive."
+)
 def test_socket_creation_and_permissions():
     """Test that socket is created with correct permissions after first remote call."""
     # First, make a version call (in-process, won't create socket)
@@ -113,7 +117,7 @@ def test_socket_creation_and_permissions():
 def test_invalid_json_request():
     """Test handling of invalid JSON requests."""
     result = subprocess.run(
-        ["python", "-m", "src.inspect_tool_support._cli.main", "exec"],
+        [sys.executable, "-m", "inspect_tool_support._cli.main", "exec"],
         input="invalid json",
         text=True,
         capture_output=True,
@@ -131,7 +135,7 @@ def test_malformed_jsonrpc_request():
     malformed_request = {"method": "version"}  # Missing required jsonrpc and id fields
 
     result = subprocess.run(
-        ["python", "-m", "src.inspect_tool_support._cli.main", "exec"],
+        [sys.executable, "-m", "inspect_tool_support._cli.main", "exec"],
         input=json.dumps(malformed_request),
         text=True,
         capture_output=True,

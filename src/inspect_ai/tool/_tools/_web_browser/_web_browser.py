@@ -236,6 +236,8 @@ def web_browser_type_submit(instance: str | None = None) -> Tool:
 
         web_browser_type_submit(751, "Yeats")
 
+        Given a dropdown (a combobox in the accessibility tree), this tool selects the option named by the text and then submits the form containing it.
+
         Args:
            element_id (int): ID of the element to type text into.
            text (str): Text to type.
@@ -274,6 +276,8 @@ def web_browser_type(instance: str | None = None) -> Tool:
         You would use the following command:
 
         web_browser_type(316, "Norah")
+
+        This tool also selects an option of a dropdown (a combobox in the accessibility tree). Pass the option you want as the text, named either by the label shown in the tree or by its underlying value. If the text names more than one option, or none, the available options are reported back to you.
 
         Note that the web_browser_type_submit tool is typically much more useful than the web_browser_type tool since it enters input and submits the form. You would typically only need to use the web_browser_type tool to fill out forms with multiple inputs.
 

@@ -9,6 +9,7 @@ from inspect_tool_support._remote_tools._web_browser.cdp.a11y import (
     node_has_property,
     string_from_ax_value,
 )
+from inspect_tool_support._remote_tools._web_browser.cdp.dom import DOMBackendNodeId
 from inspect_tool_support._remote_tools._web_browser.cdp.dom_snapshot import (
     DOMSnapshotContext,
     bounds_for_node_index,
@@ -161,6 +162,10 @@ class AccessibilityTreeNode:
     @property
     def node_id(self) -> AXNodeId:
         return self._ax_node.nodeId
+
+    @property
+    def backend_dom_node_id(self) -> DOMBackendNodeId | None:
+        return self._ax_node.backendDOMNodeId
 
     @property
     def name(self) -> str:

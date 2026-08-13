@@ -6,9 +6,10 @@ Portions based on  https://github.com/web-arena-x/webarena
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 import typing
-from typing import Literal
+from typing import Literal, NamedTuple
 
 from playwright.async_api import CDPSession, Frame, Page
 
@@ -22,6 +23,11 @@ from inspect_tool_support._remote_tools._web_browser.accessibility_tree_node imp
 from inspect_tool_support._remote_tools._web_browser.cdp.a11y import AXNodeId, AXTree
 from inspect_tool_support._remote_tools._web_browser.cdp.dom_snapshot import DOMSnapshot
 from inspect_tool_support._remote_tools._web_browser.rectangle import Rectangle
+from inspect_tool_support._remote_tools._web_browser.select_options import (
+    SelectOption,
+    describe_select_options,
+    match_select_option,
+)
 
 # Number of seconds to wait for possible click induced navigation before proceeding
 _WAIT_FOR_NAVIGATION_TIME = 2.0
@@ -29,6 +35,50 @@ _WAIT_FOR_NAVIGATION_TIME = 2.0
 # The waiting strategy to use between browser commands.
 # see https://playwright.dev/docs/api/class-page.
 _WAIT_STRATEGY: Literal["domcontentloaded"] = "domcontentloaded"
+
+# Reads a `<select>`'s options, or reports that the element is not one at all.
+# `label` is the option's label attribute, falling back to its text. An option
+# also counts as disabled when its `<optgroup>` is, which `o.disabled` alone
+# does not reflect.
+_READ_SELECT_OPTIONS_JS = """
+function() {
+  if (this.tagName !== 'SELECT') return null;
+  return Array.from(this.options).map((o) => {
+    const parent = o.parentElement;
+    const inDisabledGroup =
+      parent !== null && parent.tagName === 'OPTGROUP' && parent.disabled;
+    return [o.value, o.label || o.text, o.disabled || inDisabledGroup];
+  });
+}
+"""
+
+# Selects an option by index, notifying listeners the way a user's selection
+# would. Both events are dispatched, in the order the HTML spec requires.
+# `requestSubmit` rather than `submit` so that the form's validation and its
+# submit handlers still run.
+_SELECT_OPTION_JS = """
+function(index, submitForm) {
+  this.selectedIndex = index;
+  this.dispatchEvent(new Event('input', { bubbles: true }));
+  this.dispatchEvent(new Event('change', { bubbles: true }));
+  if (submitForm && this.form) {
+    this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit();
+  }
+}
+"""
+
+
+class _ResolvedSelect(NamedTuple):
+    """A `<select>` element in the page and the options it offers."""
+
+    element_id: int | str
+    """Id the caller named the element by, for error messages."""
+
+    object_id: str
+    """Id of the JavaScript object handle for the element."""
+
+    options: list[SelectOption]
+    """The element's options, in document order."""
 
 
 class PageCrawler:
@@ -209,15 +259,31 @@ class PageCrawler:
         await self._page.keyboard.press("Backspace")
 
     async def type(self, element_id: int | str, text: str) -> None:
-        """Types into the element with the given id."""
-        await self.click(element_id)
-        await self._page.keyboard.type(text)
+        """Types into the element with the given id.
+
+        A `<select>` is instead resolved to one of its options and selected
+        directly — see `select_options` for why typing into one misbehaves.
+        """
+        if (resolved := await self._resolve_select(element_id)) is not None:
+            await self._select_option(resolved, text)
+        else:
+            await self.click(element_id)
+            await self._page.keyboard.type(text)
 
     async def submit(self, element_id: int | str, text: str) -> None:
-        await self.clear(element_id)
-        await self._await_navigation_after_action(
-            lambda: self._page.keyboard.type(text + "\n")
-        )
+        """Enters the text into the element with the given id and submits its form.
+
+        A `<select>` is selected rather than typed into, for the same reason as
+        in `type`, and its form is then submitted directly since the keystroke
+        that would otherwise do so never reaches it.
+        """
+        if (resolved := await self._resolve_select(element_id)) is not None:
+            await self._select_option(resolved, text, submit_form=True)
+        else:
+            await self.clear(element_id)
+            await self._await_navigation_after_action(
+                lambda: self._page.keyboard.type(text + "\n")
+            )
 
     async def scroll(self, direction: Literal["up", "down"]) -> None:
         """Scrolls the page to the given direction.
@@ -253,6 +319,116 @@ class PageCrawler:
     async def refresh(self) -> None:
         """Refresh (reload) the page."""
         await self._page.reload(wait_until=_WAIT_STRATEGY)
+
+    async def _resolve_select(self, element_id: int | str) -> _ResolvedSelect | None:
+        """Resolves the element to a `<select>` handle, or None if it isn't one."""
+        node = self.lookup_node(element_id)
+        # A <select> renders as a combobox, so anything else can skip the two CDP
+        # round trips it would take to find that out. ARIA comboboxes built from
+        # <div>s do reach them, and fall out at the tag check in the page.
+        if node.role != "combobox":
+            return None
+
+        backend_node_id = node.backend_dom_node_id
+        if backend_node_id is None:
+            return None
+
+        resolved = await self._cdp_session.send(
+            "DOM.resolveNode", {"backendNodeId": backend_node_id}
+        )
+        object_id = typing.cast(
+            str | None, resolved.get("object", {}).get("objectId", None)
+        )
+        if object_id is None:
+            return None
+
+        try:
+            options = typing.cast(
+                list[tuple[str, str, bool]] | None,
+                await self._call_function_on(object_id, _READ_SELECT_OPTIONS_JS),
+            )
+        except Exception:
+            await self._release_object(object_id)
+            raise
+
+        if options is None:
+            await self._release_object(object_id)
+            return None
+
+        return _ResolvedSelect(
+            element_id=element_id,
+            object_id=object_id,
+            options=[
+                SelectOption(value, label, disabled)
+                for value, label, disabled in options
+            ],
+        )
+
+    async def _select_option(
+        self,
+        resolved: _ResolvedSelect,
+        text: str,
+        submit_form: bool = False,
+    ) -> None:
+        """Selects the option of a `<select>` named by the given text."""
+        try:
+            index = match_select_option(resolved.options, text)
+            if index is None:
+                raise ValueError(
+                    f"'{text}' does not match any option of the dropdown with id "
+                    f"{resolved.element_id}. Its options are: "
+                    f"{describe_select_options(resolved.options)}"
+                )
+
+            async def select() -> None:
+                await self._call_function_on(
+                    resolved.object_id, _SELECT_OPTION_JS, index, submit_form
+                )
+
+            # A change handler may navigate — submitting the enclosing form is a
+            # common one — so allow any navigation to complete before returning.
+            await self._await_navigation_after_action(select)
+        finally:
+            await self._release_object(resolved.object_id)
+
+    async def _call_function_on(
+        self, object_id: str, function_declaration: str, *args: object
+    ) -> object:
+        """Calls a JavaScript function with a resolved element as its `this`."""
+        result = await self._cdp_session.send(
+            "Runtime.callFunctionOn",
+            {
+                "objectId": object_id,
+                "functionDeclaration": function_declaration,
+                "arguments": [{"value": arg} for arg in args],
+                "returnByValue": True,
+            },
+        )
+        if exception_details := result.get("exceptionDetails", None):
+            description = exception_details.get("exception", {}).get(
+                "description", None
+            )
+            raise RuntimeError(
+                f"Error evaluating page function: "
+                f"{description or exception_details.get('text', 'unknown error')}"
+            )
+        return typing.cast(object, result.get("result", {}).get("value", None))
+
+    async def _release_object(self, object_id: str) -> None:
+        """Releases a resolved node so that the page can garbage collect it.
+
+        Best effort. Selecting an option routinely navigates — submitting the
+        enclosing form is the whole point of `submit` — and navigating destroys
+        the execution context that owns the handle, so the release then fails
+        with "Cannot find context with specified id". The handle died with its
+        context, which is the outcome we wanted; and since callers release in a
+        `finally`, letting that surface would report a successful selection as
+        an error and mask any exception already in flight.
+        """
+        with contextlib.suppress(Exception):
+            await self._cdp_session.send(
+                "Runtime.releaseObject", {"objectId": object_id}
+            )
 
     async def _await_navigation_after_action(
         self, action: typing.Callable[[], typing.Awaitable[None]]

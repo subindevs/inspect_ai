@@ -1,4 +1,4 @@
-from rectangle import Rectangle
+from inspect_tool_support._remote_tools._web_browser.rectangle import Rectangle
 
 
 def test_overlaps():
