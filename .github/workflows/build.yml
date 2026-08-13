@@ -343,8 +343,13 @@ jobs:
           uv pip install "./src/inspect_tool_support[dev]"
 
       - name: Test with pytest
-        # -p no:cacheprovider keeps pytest from writing into the package tree
-        run: uv run pytest src/inspect_tool_support -rA --color=yes -p no:cacheprovider
+        # Target src/ rather than the package root: installing it leaves a
+        # setuptools build/lib/ copy of every module behind, and the repo's
+        # norecursedirs replaces pytest's default (which excludes `build`), so
+        # --doctest-modules would collect both copies and fail on the duplicate
+        # module names. -p no:cacheprovider keeps pytest from writing into the
+        # package tree.
+        run: uv run pytest src/inspect_tool_support/src -rA --color=yes -p no:cacheprovider
 
       - name: Minimize uv cache
         if: ${{ !cancelled() }}
